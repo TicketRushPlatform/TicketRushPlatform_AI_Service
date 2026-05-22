@@ -9,6 +9,7 @@ data/
 .omx/
 basic-pitch/
 .env
-
+docs/
+.csg/
 # Virtual environments
 .venv

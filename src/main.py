@@ -1,4 +1,7 @@
 import os
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 import httpx
@@ -6,6 +9,8 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+
+from src.frontend import router as frontend_router
 
 load_dotenv()
 
@@ -18,6 +23,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.include_router(frontend_router)
 
 RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY")
 RAPIDAPI_HOST = os.getenv(
@@ -30,6 +36,15 @@ SONGFINDER_URL = os.getenv(
 )
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+RECORDINGS_DIR = Path(os.getenv("RECORDINGS_DIR", "data/recordings"))
+
+AUDIO_EXTENSION_BY_CONTENT_TYPE = {
+    "audio/mpeg": ".mp3",
+    "audio/mp4": ".m4a",
+    "audio/wav": ".wav",
+    "audio/webm": ".webm",
+    "audio/x-wav": ".wav",
+}
 
 
 class MovieLookupOutput(BaseModel):
@@ -37,6 +52,29 @@ class MovieLookupOutput(BaseModel):
         default=None,
         description="Movie title associated with the song, or null if unknown.",
     )
+
+
+def safe_audio_extension(filename: Optional[str], content_type: Optional[str]) -> str:
+    suffix = Path(filename or "").suffix.lower()
+    if suffix and 2 <= len(suffix) <= 10 and suffix[1:].replace("-", "").isalnum():
+        return suffix
+
+    clean_content_type = (content_type or "").split(";", 1)[0].strip().lower()
+    return AUDIO_EXTENSION_BY_CONTENT_TYPE.get(clean_content_type, ".audio")
+
+
+def save_uploaded_audio(
+    audio_bytes: bytes,
+    audio: UploadFile,
+    recordings_dir: Optional[Path] = None,
+) -> Path:
+    target_dir = recordings_dir or RECORDINGS_DIR
+    target_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    extension = safe_audio_extension(audio.filename, audio.content_type)
+    audio_path = target_dir / f"{timestamp}-{uuid.uuid4().hex}{extension}"
+    audio_path.write_bytes(audio_bytes)
+    return audio_path
 
 
 def extract_songfinder_track(songfinder_data: Any) -> Optional[Dict[str, Any]]:
@@ -133,6 +171,8 @@ async def recognize_song(
             detail="Empty audio file",
         )
 
+    saved_audio_path = save_uploaded_audio(audio_bytes, audio)
+
     headers = {
         "content-type": "application/octet-stream",
         "x-rapidapi-host": RAPIDAPI_HOST,
@@ -167,25 +207,12 @@ async def recognize_song(
         except Exception:
             data = response.text
         track = extract_songfinder_track(data)
-        # track = {
-        #     "title": "My Heart Will Go On",
-        #     "artist": "Celine Dion",
-        #     "album": "Let's Talk About Love",
-        #     "release_date": "1997",
-        #     "genre": "Pop",
-        #     "label": "Epic Records",
-        #     "cover_art": "https://example.com/cover.jpg",
-        #     "isrc": "USUM79901234",
-        # }
         movie = find_movie_for_track(track)
-        # data = {
-        #     "mock": True,
-        #     "message": "This is a mocked response. Replace with actual SongFinder API call.",
-        # }
         return {
             "success": True,
             "song": track.get("title") if track else None,
             "movie": movie,
+            "saved_audio_path": str(saved_audio_path),
         }
 
     except httpx.TimeoutException:
