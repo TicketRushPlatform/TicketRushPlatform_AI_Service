@@ -25,7 +25,7 @@ class EventServiceClient(JsonHttpServiceClient):
         self,
         base_url: Optional[str] = None,
         *,
-        http_client: Optional[httpx.Client] = None,
+        http_client: Optional[httpx.AsyncClient] = None,
         timeout: float = 15.0,
     ) -> None:
         super().__init__(
@@ -35,7 +35,7 @@ class EventServiceClient(JsonHttpServiceClient):
             timeout=timeout,
         )
 
-    def list_events(
+    async def list_events(
         self,
         *,
         page: int = 1,
@@ -52,20 +52,16 @@ class EventServiceClient(JsonHttpServiceClient):
         if search:
             params["search"] = search
 
-        return self._validate_response(
-            self.get_json("/events", params=params),
-            PaginatedResponse,
-        )
+        payload = await self.get_json("/events", params=params)
+        return self._validate_response(payload, PaginatedResponse)
 
-    def get_event_by_id(self, event_id: str) -> Any:
+    async def get_event_by_id(self, event_id: str) -> Any:
         clean_event_id = event_id.strip()
         if not clean_event_id:
             raise ValueError("event_id is required.")
 
-        return self._validate_response(
-            self.get_json(f"/events/{quote(clean_event_id, safe='')}"),
-            SuccessResponse,
-        )
+        payload = await self.get_json(f"/events/{quote(clean_event_id, safe='')}")
+        return self._validate_response(payload, SuccessResponse)
 
     def _validate_response(self, payload: Any, schema: type[PaginatedResponse] | type[SuccessResponse]) -> dict[str, Any]:
         try:

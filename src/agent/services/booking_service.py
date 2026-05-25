@@ -25,7 +25,7 @@ class BookingServiceClient(JsonHttpServiceClient):
         self,
         base_url: Optional[str] = None,
         *,
-        http_client: Optional[httpx.Client] = None,
+        http_client: Optional[httpx.AsyncClient] = None,
         timeout: float = 15.0,
     ) -> None:
         super().__init__(
@@ -35,63 +35,49 @@ class BookingServiceClient(JsonHttpServiceClient):
             timeout=timeout,
         )
 
-    def hold_seats(self, *, showtime_id: str, seat_ids: list[str], user_id: str) -> dict[str, Any]:
-        return self._validate_response(
-            self.request_json(
-                "POST",
-                "/bookings/hold",
-                json={
-                    "seat_ids": seat_ids,
-                    "showtime_id": showtime_id,
-                    "user_id": user_id,
-                },
-            ),
-            SuccessResponse,
+    async def hold_seats(self, *, showtime_id: str, seat_ids: list[str], user_id: str) -> dict[str, Any]:
+        payload = await self.request_json(
+            "POST",
+            "/bookings/hold",
+            json={
+                "seat_ids": seat_ids,
+                "showtime_id": showtime_id,
+                "user_id": user_id,
+            },
         )
+        return self._validate_response(payload, SuccessResponse)
 
-    def release_expired_holds(self) -> dict[str, Any]:
-        return self._validate_response(
-            self.request_json("POST", "/bookings/release-expired", json={}),
-            SuccessResponse,
-        )
+    async def release_expired_holds(self) -> dict[str, Any]:
+        payload = await self.request_json("POST", "/bookings/release-expired", json={})
+        return self._validate_response(payload, SuccessResponse)
 
-    def get_bookings_by_user(self, *, user_id: str, page: int = 1, page_size: int = 20) -> dict[str, Any]:
+    async def get_bookings_by_user(self, *, user_id: str, page: int = 1, page_size: int = 20) -> dict[str, Any]:
         clean_user_id = self._required_id(user_id, "user_id")
-        return self._validate_response(
-            self.get_json(
-                f"/bookings/user/{quote(clean_user_id, safe='')}",
-                params={"page": page, "page_size": page_size},
-            ),
-            PaginatedResponse,
+        payload = await self.get_json(
+            f"/bookings/user/{quote(clean_user_id, safe='')}",
+            params={"page": page, "page_size": page_size},
         )
+        return self._validate_response(payload, PaginatedResponse)
 
-    def get_booking_by_id(self, booking_id: str) -> dict[str, Any]:
+    async def get_booking_by_id(self, booking_id: str) -> dict[str, Any]:
         clean_booking_id = self._required_id(booking_id, "booking_id")
-        return self._validate_response(
-            self.get_json(f"/bookings/{quote(clean_booking_id, safe='')}"),
-            SuccessResponse,
-        )
+        payload = await self.get_json(f"/bookings/{quote(clean_booking_id, safe='')}")
+        return self._validate_response(payload, SuccessResponse)
 
-    def cancel_booking(self, booking_id: str) -> dict[str, Any]:
+    async def cancel_booking(self, booking_id: str) -> dict[str, Any]:
         clean_booking_id = self._required_id(booking_id, "booking_id")
-        return self._validate_response(
-            self.request_json("POST", f"/bookings/{quote(clean_booking_id, safe='')}/cancel", json={}),
-            SuccessResponse,
-        )
+        payload = await self.request_json("POST", f"/bookings/{quote(clean_booking_id, safe='')}/cancel", json={})
+        return self._validate_response(payload, SuccessResponse)
 
-    def confirm_booking(self, booking_id: str) -> dict[str, Any]:
+    async def confirm_booking(self, booking_id: str) -> dict[str, Any]:
         clean_booking_id = self._required_id(booking_id, "booking_id")
-        return self._validate_response(
-            self.request_json("POST", f"/bookings/{quote(clean_booking_id, safe='')}/confirm", json={}),
-            SuccessResponse,
-        )
+        payload = await self.request_json("POST", f"/bookings/{quote(clean_booking_id, safe='')}/confirm", json={})
+        return self._validate_response(payload, SuccessResponse)
 
-    def get_showtime_seats(self, showtime_id: str) -> dict[str, Any]:
+    async def get_showtime_seats(self, showtime_id: str) -> dict[str, Any]:
         clean_showtime_id = self._required_id(showtime_id, "showtime_id")
-        return self._validate_response(
-            self.get_json(f"/showtimes/{quote(clean_showtime_id, safe='')}/seats"),
-            SuccessResponse,
-        )
+        payload = await self.get_json(f"/showtimes/{quote(clean_showtime_id, safe='')}/seats")
+        return self._validate_response(payload, SuccessResponse)
 
     def get_showtime_seats_ws_endpoint(self, showtime_id: str) -> dict[str, str]:
         clean_showtime_id = self._required_id(showtime_id, "showtime_id")

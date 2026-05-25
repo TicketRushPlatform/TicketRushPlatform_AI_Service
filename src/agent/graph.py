@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import os
+import logging
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Sequence
 
@@ -19,6 +22,7 @@ from src.agent.service_registry import DEFAULT_SERVICE_PROVIDERS, ServiceToolPro
 PROMPT_PATH = Path(__file__).parent / "prompts" / "ticket_agent_system_prompt.md"
 AGENT_NODE = "agent"
 TOOLS_NODE = "tools"
+logger = logging.getLogger(__name__)
 
 
 def load_ticket_agent_prompt(prompt_path: Path = PROMPT_PATH) -> str:
@@ -49,10 +53,20 @@ def route_after_model(state: MessagesState) -> str:
     return END
 
 
-def build_model_node(model: Any, system_prompt: str) -> Callable[[MessagesState], dict[str, list[BaseMessage]]]:
-    def call_model(state: MessagesState) -> dict[str, list[BaseMessage]]:
+def build_model_node(model: Any, system_prompt: str) -> Callable[[MessagesState], Any]:
+    async def call_model(state: MessagesState) -> dict[str, list[BaseMessage]]:
         messages = [SystemMessage(content=system_prompt), *state.get("messages", [])]
-        response = model.invoke(messages)
+        logger.info("agent model invoked message_count=%d", len(messages))
+        ainvoke = getattr(model, "ainvoke", None)
+        if ainvoke is not None:
+            response = await ainvoke(messages)
+        else:
+            response = await asyncio.to_thread(model.invoke, messages)
+        tool_calls = getattr(response, "tool_calls", None)
+        if tool_calls:
+            logger.info("agent requested tool calls tool_calls=%r", tool_calls)
+        else:
+            logger.info("agent model response content=%r", getattr(response, "content", response))
         return {"messages": [response]}
 
     return call_model
@@ -118,6 +132,38 @@ def build_ticket_agent(
     return graph.compile(checkpointer=checkpointer or InMemorySaver())
 
 
+@lru_cache(maxsize=1)
+def get_ticket_agent() -> Any:
+    return build_ticket_agent()
+
+
+async def ainvoke_ticket_agent(
+    message: str,
+    *,
+    thread_id: str = "default",
+    config: Optional[dict[str, Any]] = None,
+    **kwargs: Any,
+) -> Any:
+    agent = build_ticket_agent(**kwargs) if kwargs else get_ticket_agent()
+    invoke_config = dict(config or {})
+    configurable = dict(invoke_config.get("configurable") or {})
+    configurable.setdefault("thread_id", thread_id)
+    invoke_config["configurable"] = configurable
+
+    ainvoke = getattr(agent, "ainvoke", None)
+    if ainvoke is not None:
+        return await ainvoke(
+            {"messages": [{"role": "user", "content": message}]},
+            config=invoke_config,
+        )
+
+    return await asyncio.to_thread(
+        agent.invoke,
+        {"messages": [{"role": "user", "content": message}]},
+        config=invoke_config,
+    )
+
+
 def invoke_ticket_agent(
     message: str,
     *,
@@ -125,18 +171,10 @@ def invoke_ticket_agent(
     config: Optional[dict[str, Any]] = None,
     **kwargs: Any,
 ) -> Any:
-    agent = build_ticket_agent(**kwargs)
-    invoke_config = dict(config or {})
-    configurable = dict(invoke_config.get("configurable") or {})
-    configurable.setdefault("thread_id", thread_id)
-    invoke_config["configurable"] = configurable
-
-    return agent.invoke(
-        {"messages": [{"role": "user", "content": message}]},
-        config=invoke_config,
-    )
+    return asyncio.run(ainvoke_ticket_agent(message, thread_id=thread_id, config=config, **kwargs))
 
 
 load_event_agent_prompt = load_ticket_agent_prompt
 build_event_agent = build_ticket_agent
 invoke_event_agent = invoke_ticket_agent
+ainvoke_event_agent = ainvoke_ticket_agent

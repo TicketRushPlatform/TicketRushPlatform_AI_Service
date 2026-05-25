@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from langchain_core.messages import AIMessage
 from langchain_core.tools import tool
@@ -7,7 +8,15 @@ from langgraph.graph import END, START
 from langgraph.prebuilt import ToolNode
 from pydantic import BaseModel, Field
 
-from src.agent.graph import build_ticket_agent, invoke_ticket_agent, render_ticket_agent_prompt, route_after_model
+from src.agent.graph import (
+    ainvoke_ticket_agent,
+    build_model_node,
+    build_ticket_agent,
+    get_ticket_agent,
+    invoke_ticket_agent,
+    render_ticket_agent_prompt,
+    route_after_model,
+)
 from src.agent.services.event_service import EventServiceClient
 from src.agent.service_registry import EVENT_SERVICE_PROVIDER, ServiceToolProvider, collect_service_tools
 
@@ -28,7 +37,7 @@ class FakeChatModel:
         return AIMessage(content="ok")
 
 
-class AgentServiceRegistryTests(unittest.TestCase):
+class AgentServiceRegistryTests(unittest.IsolatedAsyncioTestCase):
     def test_collect_service_tools_loads_event_tools_from_client_mapping(self):
         service_client = EventServiceClient(base_url="http://event-service.local/api/v1")
 
@@ -107,6 +116,23 @@ class AgentServiceRegistryTests(unittest.TestCase):
 
         self.assertEqual(result["messages"][-1].content, "ok")
 
+    def test_get_ticket_agent_reuses_single_compiled_graph(self):
+        class FakeCompiledGraph:
+            pass
+
+        fake_graph = FakeCompiledGraph()
+        get_ticket_agent.cache_clear()
+        try:
+            with patch("src.agent.graph.build_ticket_agent", return_value=fake_graph) as build_agent:
+                first = get_ticket_agent()
+                second = get_ticket_agent()
+        finally:
+            get_ticket_agent.cache_clear()
+
+        self.assertIs(first, fake_graph)
+        self.assertIs(second, fake_graph)
+        build_agent.assert_called_once_with()
+
     def test_route_after_model_goes_to_tools_only_when_model_requested_tool_calls(self):
         with_tool_call = AIMessage(
             content="",
@@ -116,6 +142,49 @@ class AgentServiceRegistryTests(unittest.TestCase):
 
         self.assertEqual(route_after_model({"messages": [with_tool_call]}), "tools")
         self.assertEqual(route_after_model({"messages": [without_tool_call]}), END)
+
+    async def test_model_node_logs_tool_calls_from_agent_response(self):
+        class ToolCallingModel:
+            def invoke(self, messages):
+                return AIMessage(
+                    content="",
+                    tool_calls=[{"name": "list_events", "args": {"page": 1, "page_size": 5}, "id": "call_1"}],
+                )
+
+        node = build_model_node(ToolCallingModel(), "TicketRush agent.")
+
+        with self.assertLogs("src.agent.graph", level="INFO") as logs:
+            await node({"messages": [{"role": "user", "content": "list events"}]})
+
+        joined_logs = "\n".join(logs.output)
+        self.assertIn("agent requested tool calls", joined_logs)
+        self.assertIn("list_events", joined_logs)
+
+
+class AsyncAgentInvocationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_ainvoke_ticket_agent_reuses_singleton_and_sets_thread_id(self):
+        class FakeCompiledGraph:
+            def __init__(self):
+                self.calls = []
+
+            async def ainvoke(self, state, *, config):
+                self.calls.append((state, config))
+                return {"messages": [AIMessage(content="ok")]}
+
+        fake_graph = FakeCompiledGraph()
+        get_ticket_agent.cache_clear()
+        try:
+            with patch("src.agent.graph.build_ticket_agent", return_value=fake_graph) as build_agent:
+                result = await ainvoke_ticket_agent("hello", thread_id="user-1")
+                await ainvoke_ticket_agent("again", thread_id="user-1")
+        finally:
+            get_ticket_agent.cache_clear()
+
+        self.assertEqual(result["messages"][-1].content, "ok")
+        self.assertEqual(len(fake_graph.calls), 2)
+        self.assertEqual(fake_graph.calls[0][0], {"messages": [{"role": "user", "content": "hello"}]})
+        self.assertEqual(fake_graph.calls[0][1]["configurable"]["thread_id"], "user-1")
+        build_agent.assert_called_once_with()
 
 
 if __name__ == "__main__":

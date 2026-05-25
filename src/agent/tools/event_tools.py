@@ -33,14 +33,14 @@ def create_event_service_tools(client: Optional[EventServiceClient] = None) -> l
             "Use optional filters page, page_size, event_type, and search when the user asks to browse or search."
         ),
     )
-    def list_events(
+    async def list_events(
         page: int = 1,
         page_size: int = 20,
         event_type: Optional[Literal["EVENT", "MOVIE"]] = None,
         search: Optional[str] = None,
     ) -> Any:
         """List events from Event Service."""
-        return service_client.list_events(
+        return await service_client.list_events(
             page=page,
             page_size=page_size,
             event_type=event_type,
@@ -55,8 +55,8 @@ def create_event_service_tools(client: Optional[EventServiceClient] = None) -> l
             "Use this only when the user provides a concrete event_id."
         ),
     )
-    def get_event_by_id(event_id: str) -> Any:
+    async def get_event_by_id(event_id: str) -> Any:
         """Get one event detail from Event Service."""
-        return service_client.get_event_by_id(event_id)
+        return await service_client.get_event_by_id(event_id)
 
     return [list_events, get_event_by_id]

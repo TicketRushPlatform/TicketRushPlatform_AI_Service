@@ -5,13 +5,13 @@ from typing import Any, Optional
 from langchain_core.tools import BaseTool, tool
 from pydantic import BaseModel, Field
 
+from src.agent.auth_context import require_authenticated_user
 from src.agent.services.booking_service import BookingServiceClient
 
 
 class HoldBookingSeatsInput(BaseModel):
     showtime_id: str = Field(..., min_length=1, description="Showtime ID for POST /bookings/hold.")
     seat_ids: list[str] = Field(..., min_length=1, description="Seat IDs to hold. Must include at least one seat.")
-    user_id: str = Field(..., min_length=1, description="User ID for the holding booking.")
 
 
 class ReleaseExpiredBookingHoldsInput(BaseModel):
@@ -19,7 +19,10 @@ class ReleaseExpiredBookingHoldsInput(BaseModel):
 
 
 class GetBookingsByUserInput(BaseModel):
-    user_id: str = Field(..., min_length=1, description="User ID path parameter for GET /bookings/user/{user_id}.")
+    user_id: Optional[str] = Field(
+        default=None,
+        description="User ID path parameter for GET /bookings/user/{user_id}. Omit for the authenticated user.",
+    )
     page: int = Field(default=1, ge=1, description="Page number for bookings pagination.")
     page_size: int = Field(default=20, ge=1, le=100, description="Number of bookings to return per page.")
 
@@ -40,69 +43,72 @@ def create_booking_service_tools(client: Optional[BookingServiceClient] = None) 
         args_schema=HoldBookingSeatsInput,
         description=(
             "Call Booking Service POST /bookings/hold to create a holding booking for selected seats. "
-            "Requires showtime_id, user_id, and one or more seat_ids."
+            "Requires showtime_id and one or more seat_ids. The user is always the authenticated user."
         ),
     )
-    def hold_booking_seats(showtime_id: str, seat_ids: list[str], user_id: str) -> Any:
+    async def hold_booking_seats(showtime_id: str, seat_ids: list[str]) -> Any:
         """Hold selected seats for a user and showtime."""
-        return service_client.hold_seats(showtime_id=showtime_id, seat_ids=seat_ids, user_id=user_id)
+        user_id = require_authenticated_user().user_id
+        return await service_client.hold_seats(showtime_id=showtime_id, seat_ids=seat_ids, user_id=user_id)
 
     @tool(
         "release_expired_booking_holds",
         args_schema=ReleaseExpiredBookingHoldsInput,
         description="Call Booking Service POST /bookings/release-expired to release all expired holding bookings.",
     )
-    def release_expired_booking_holds() -> Any:
+    async def release_expired_booking_holds() -> Any:
         """Release expired holding bookings and seats."""
-        return service_client.release_expired_holds()
+        return await service_client.release_expired_holds()
 
     @tool(
         "get_bookings_by_user",
         args_schema=GetBookingsByUserInput,
         description=(
-            "Call Booking Service GET /bookings/user/{user_id} to retrieve paginated bookings for a user. "
-            "Use page and page_size when the user asks for a specific page."
+            "Call Booking Service GET /bookings/user/{user_id} to retrieve paginated bookings. "
+            "For normal users, always use the authenticated user's ID. Admins may request another user_id."
         ),
     )
-    def get_bookings_by_user(user_id: str, page: int = 1, page_size: int = 20) -> Any:
+    async def get_bookings_by_user(user_id: Optional[str] = None, page: int = 1, page_size: int = 20) -> Any:
         """Get paginated bookings for a user."""
-        return service_client.get_bookings_by_user(user_id=user_id, page=page, page_size=page_size)
+        user = require_authenticated_user()
+        target_user_id = user_id if user.role == "ADMIN" and user_id else user.user_id
+        return await service_client.get_bookings_by_user(user_id=target_user_id, page=page, page_size=page_size)
 
     @tool(
         "get_booking_by_id",
         args_schema=BookingIdInput,
         description="Call Booking Service GET /bookings/{id} to retrieve booking details by booking ID.",
     )
-    def get_booking_by_id(booking_id: str) -> Any:
+    async def get_booking_by_id(booking_id: str) -> Any:
         """Get booking details by ID."""
-        return service_client.get_booking_by_id(booking_id)
+        return await service_client.get_booking_by_id(booking_id)
 
     @tool(
         "cancel_booking",
         args_schema=BookingIdInput,
         description="Call Booking Service POST /bookings/{id}/cancel to cancel a booking and release held seats.",
     )
-    def cancel_booking(booking_id: str) -> Any:
+    async def cancel_booking(booking_id: str) -> Any:
         """Cancel a booking."""
-        return service_client.cancel_booking(booking_id)
+        return await service_client.cancel_booking(booking_id)
 
     @tool(
         "confirm_booking",
         args_schema=BookingIdInput,
         description="Call Booking Service POST /bookings/{id}/confirm to confirm a held booking and mark seats sold.",
     )
-    def confirm_booking(booking_id: str) -> Any:
+    async def confirm_booking(booking_id: str) -> Any:
         """Confirm a held booking."""
-        return service_client.confirm_booking(booking_id)
+        return await service_client.confirm_booking(booking_id)
 
     @tool(
         "get_showtime_seats",
         args_schema=ShowtimeIdInput,
         description="Call Booking Service GET /showtimes/{showtime_id}/seats to get seat status for a showtime.",
     )
-    def get_showtime_seats(showtime_id: str) -> Any:
+    async def get_showtime_seats(showtime_id: str) -> Any:
         """Get seat status for a showtime."""
-        return service_client.get_showtime_seats(showtime_id)
+        return await service_client.get_showtime_seats(showtime_id)
 
     @tool(
         "get_showtime_seats_ws_endpoint",

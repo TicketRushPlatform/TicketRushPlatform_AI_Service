@@ -8,8 +8,8 @@ from src.agent.tools.event_tools import GetEventByIdInput, ListEventsInput
 from src.agent.tools.event_tools import create_event_service_tools
 
 
-class EventAgentToolsTests(unittest.TestCase):
-    def test_list_events_tool_calls_event_service_with_filters(self):
+class EventAgentToolsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_list_events_tool_calls_event_service_with_filters(self):
         seen_request = None
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -26,14 +26,14 @@ class EventAgentToolsTests(unittest.TestCase):
                 },
             )
 
-        http_client = httpx.Client(transport=httpx.MockTransport(handler))
+        http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         service_client = EventServiceClient(
             base_url="http://event-service.local/api/v1",
             http_client=http_client,
         )
         list_tool = create_event_service_tools(service_client)[0]
 
-        result = list_tool.invoke(
+        result = await list_tool.ainvoke(
             {
                 "page": 2,
                 "page_size": 5,
@@ -50,7 +50,7 @@ class EventAgentToolsTests(unittest.TestCase):
         self.assertEqual(seen_request.url.params["type"], "MOVIE")
         self.assertEqual(seen_request.url.params["search"], "Interstellar")
 
-    def test_get_event_by_id_tool_calls_event_detail_endpoint(self):
+    async def test_get_event_by_id_tool_calls_event_detail_endpoint(self):
         seen_request = None
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -61,20 +61,20 @@ class EventAgentToolsTests(unittest.TestCase):
                 json={"data": {"id": "evt_42", "name": "Jazz Night"}, "message": "OK"},
             )
 
-        http_client = httpx.Client(transport=httpx.MockTransport(handler))
+        http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         service_client = EventServiceClient(
             base_url="http://event-service.local/api/v1",
             http_client=http_client,
         )
         get_tool = create_event_service_tools(service_client)[1]
 
-        result = get_tool.invoke({"event_id": "evt_42"})
+        result = await get_tool.ainvoke({"event_id": "evt_42"})
 
         self.assertEqual(result["data"]["id"], "evt_42")
         self.assertEqual(seen_request.method, "GET")
         self.assertEqual(seen_request.url.path, "/api/v1/events/evt_42")
 
-    def test_get_event_by_id_encodes_event_id_path_segment(self):
+    async def test_get_event_by_id_encodes_event_id_path_segment(self):
         seen_request = None
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -82,19 +82,19 @@ class EventAgentToolsTests(unittest.TestCase):
             seen_request = request
             return httpx.Response(200, json={"data": {"id": "movie/42"}, "message": "OK"})
 
-        http_client = httpx.Client(transport=httpx.MockTransport(handler))
+        http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         service_client = EventServiceClient(
             base_url="http://event-service.local/api/v1",
             http_client=http_client,
         )
         get_tool = create_event_service_tools(service_client)[1]
 
-        get_tool.invoke({"event_id": "movie/42"})
+        await get_tool.ainvoke({"event_id": "movie/42"})
 
         self.assertEqual(str(seen_request.url), "http://event-service.local/api/v1/events/movie%2F42")
 
-    def test_list_events_tool_rejects_response_outside_paginated_schema(self):
-        http_client = httpx.Client(
+    async def test_list_events_tool_rejects_response_outside_paginated_schema(self):
+        http_client = httpx.AsyncClient(
             transport=httpx.MockTransport(
                 lambda request: httpx.Response(200, json={"data": [], "page": 1, "page_size": 20})
             )
@@ -106,12 +106,12 @@ class EventAgentToolsTests(unittest.TestCase):
         list_tool = create_event_service_tools(service_client)[0]
 
         with self.assertRaises(EventServiceError) as error:
-            list_tool.invoke({})
+            await list_tool.ainvoke({})
 
         self.assertIn("PaginatedResponse", str(error.exception))
 
-    def test_get_event_by_id_tool_rejects_response_outside_success_schema(self):
-        http_client = httpx.Client(
+    async def test_get_event_by_id_tool_rejects_response_outside_success_schema(self):
+        http_client = httpx.AsyncClient(
             transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"message": "OK"}))
         )
         service_client = EventServiceClient(
@@ -121,12 +121,12 @@ class EventAgentToolsTests(unittest.TestCase):
         get_tool = create_event_service_tools(service_client)[1]
 
         with self.assertRaises(EventServiceError) as error:
-            get_tool.invoke({"event_id": "evt_42"})
+            await get_tool.ainvoke({"event_id": "evt_42"})
 
         self.assertIn("SuccessResponse", str(error.exception))
 
-    def test_event_service_http_error_uses_error_response_schema(self):
-        http_client = httpx.Client(
+    async def test_event_service_http_error_uses_error_response_schema(self):
+        http_client = httpx.AsyncClient(
             transport=httpx.MockTransport(
                 lambda request: httpx.Response(404, json={"code": 404, "message": "event not found"})
             )
@@ -138,7 +138,7 @@ class EventAgentToolsTests(unittest.TestCase):
         get_tool = create_event_service_tools(service_client)[1]
 
         with self.assertRaises(EventServiceError) as error:
-            get_tool.invoke({"event_id": "missing"})
+            await get_tool.ainvoke({"event_id": "missing"})
 
         self.assertIn("404", str(error.exception))
         self.assertIn("event not found", str(error.exception))
@@ -146,7 +146,9 @@ class EventAgentToolsTests(unittest.TestCase):
     def test_tools_have_explicit_names_descriptions_and_schemas(self):
         service_client = EventServiceClient(
             base_url="http://event-service.local/api/v1",
-            http_client=httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, json={}))),
+            http_client=httpx.AsyncClient(
+                transport=httpx.MockTransport(lambda request: httpx.Response(200, json={}))
+            ),
         )
 
         list_tool, get_tool = create_event_service_tools(service_client)
