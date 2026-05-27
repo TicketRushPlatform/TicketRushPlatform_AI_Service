@@ -1,3 +1,4 @@
+import logging
 import unittest
 from unittest.mock import AsyncMock, patch
 
@@ -5,10 +6,18 @@ from fastapi.testclient import TestClient
 
 from tests.test_auth_context import make_token
 from src.agent.services.http_service import ServiceApiError
-from src.main import app
+from src.main import app, resolve_log_level
 
 
 class MainApiHelpersTests(unittest.TestCase):
+    def test_resolve_log_level_accepts_lowercase_names(self):
+        self.assertEqual(resolve_log_level("debug"), logging.DEBUG)
+        self.assertEqual(resolve_log_level(" INFO "), logging.INFO)
+
+    def test_resolve_log_level_defaults_invalid_values_to_info(self):
+        self.assertEqual(resolve_log_level("verbose"), logging.INFO)
+        self.assertEqual(resolve_log_level(""), logging.INFO)
+
     def test_chat_endpoint_returns_agent_message(self):
         client = TestClient(app)
 

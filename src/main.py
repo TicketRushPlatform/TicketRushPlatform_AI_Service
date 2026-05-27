@@ -23,7 +23,18 @@ from src.agent.services.http_service import (
 from src.song_recognition.songfinder_service import recognize_song_bytes
 
 load_dotenv()
-logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
+
+
+def resolve_log_level(value: str | None) -> int:
+    raw_level = (value or "INFO").strip()
+    if not raw_level:
+        return logging.INFO
+    if raw_level.isdigit():
+        return int(raw_level)
+    return logging.getLevelNamesMapping().get(raw_level.upper(), logging.INFO)
+
+
+logging.basicConfig(level=resolve_log_level(os.getenv("LOG_LEVEL")))
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="SongFinder Backend")
