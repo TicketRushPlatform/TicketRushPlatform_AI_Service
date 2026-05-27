@@ -19,7 +19,13 @@ from src.agent.graph import (
     sanitize_tool_message_history,
 )
 from src.agent.services.event_service import EventServiceClient
-from src.agent.service_registry import EVENT_SERVICE_PROVIDER, ServiceToolProvider, collect_service_tools
+from src.agent.services.user_service import UserServiceClient
+from src.agent.service_registry import (
+    EVENT_SERVICE_PROVIDER,
+    USER_SERVICE_PROVIDER,
+    ServiceToolProvider,
+    collect_service_tools,
+)
 
 
 class GetBookingByIdInput(BaseModel):
@@ -44,7 +50,20 @@ class AgentServiceRegistryTests(unittest.IsolatedAsyncioTestCase):
 
         tools = collect_service_tools(providers=[EVENT_SERVICE_PROVIDER], clients={"event": service_client})
 
-        self.assertEqual([tool.name for tool in tools], ["list_events", "get_event_by_id"])
+        self.assertEqual(
+            [tool.name for tool in tools],
+            ["list_events", "get_event_by_id", "list_event_showtimes", "get_showtime_by_id"],
+        )
+
+    def test_collect_service_tools_loads_user_tools_from_client_mapping(self):
+        service_client = UserServiceClient(base_url="http://user-service.local")
+
+        tools = collect_service_tools(providers=[USER_SERVICE_PROVIDER], clients={"user": service_client})
+
+        self.assertEqual(
+            [tool.name for tool in tools],
+            ["get_current_user", "list_users", "get_user_by_id", "get_user_stats"],
+        )
 
     def test_collect_service_tools_accepts_new_service_provider_without_graph_changes(self):
         @tool(

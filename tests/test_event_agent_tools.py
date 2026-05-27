@@ -4,7 +4,12 @@ import httpx
 from langchain_core.tools import BaseTool
 
 from src.agent.services.event_service import EventServiceClient, EventServiceError
-from src.agent.tools.event_tools import GetEventByIdInput, ListEventsInput
+from src.agent.tools.event_tools import (
+    GetEventByIdInput,
+    GetShowtimeByIdInput,
+    ListEventShowtimesInput,
+    ListEventsInput,
+)
 from src.agent.tools.event_tools import create_event_service_tools
 
 
@@ -93,6 +98,64 @@ class EventAgentToolsTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(str(seen_request.url), "http://event-service.local/api/v1/events/movie%2F42")
 
+    async def test_list_event_showtimes_tool_calls_event_showtimes_endpoint(self):
+        seen_request = None
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal seen_request
+            seen_request = request
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {
+                            "id": "show_1",
+                            "event_id": "evt_42",
+                            "venue": "Main Hall",
+                            "start_time": "2026-05-28T13:00:00Z",
+                        }
+                    ],
+                    "message": "OK",
+                },
+            )
+
+        http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        service_client = EventServiceClient(
+            base_url="http://event-service.local/api/v1",
+            http_client=http_client,
+        )
+        showtimes_tool = create_event_service_tools(service_client)[2]
+
+        result = await showtimes_tool.ainvoke({"event_id": "evt_42"})
+
+        self.assertEqual(result["data"][0]["id"], "show_1")
+        self.assertEqual(seen_request.method, "GET")
+        self.assertEqual(seen_request.url.path, "/api/v1/events/evt_42/showtimes")
+
+    async def test_get_showtime_by_id_tool_calls_showtime_endpoint(self):
+        seen_request = None
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal seen_request
+            seen_request = request
+            return httpx.Response(
+                200,
+                json={"data": {"id": "show_1", "event_id": "evt_42"}, "message": "OK"},
+            )
+
+        http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        service_client = EventServiceClient(
+            base_url="http://event-service.local/api/v1",
+            http_client=http_client,
+        )
+        showtime_tool = create_event_service_tools(service_client)[3]
+
+        result = await showtime_tool.ainvoke({"showtime_id": "show_1"})
+
+        self.assertEqual(result["data"]["event_id"], "evt_42")
+        self.assertEqual(seen_request.method, "GET")
+        self.assertEqual(seen_request.url.path, "/api/v1/showtimes/show_1")
+
     async def test_list_events_tool_rejects_response_outside_paginated_schema(self):
         http_client = httpx.AsyncClient(
             transport=httpx.MockTransport(
@@ -151,7 +214,7 @@ class EventAgentToolsTests(unittest.IsolatedAsyncioTestCase):
             ),
         )
 
-        list_tool, get_tool = create_event_service_tools(service_client)
+        list_tool, get_tool, list_showtimes_tool, get_showtime_tool = create_event_service_tools(service_client)
 
         self.assertIsInstance(list_tool, BaseTool)
         self.assertEqual(list_tool.name, "list_events")
@@ -164,6 +227,14 @@ class EventAgentToolsTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("GET /events/{id}", get_tool.description)
         self.assertIn("event_id", get_tool.args)
         self.assertIs(get_tool.args_schema, GetEventByIdInput)
+        self.assertEqual(list_showtimes_tool.name, "list_event_showtimes")
+        self.assertIn("GET /events/{id}/showtimes", list_showtimes_tool.description)
+        self.assertIn("event_id", list_showtimes_tool.args)
+        self.assertIs(list_showtimes_tool.args_schema, ListEventShowtimesInput)
+        self.assertEqual(get_showtime_tool.name, "get_showtime_by_id")
+        self.assertIn("GET /showtimes/{id}", get_showtime_tool.description)
+        self.assertIn("showtime_id", get_showtime_tool.args)
+        self.assertIs(get_showtime_tool.args_schema, GetShowtimeByIdInput)
 
 
 if __name__ == "__main__":

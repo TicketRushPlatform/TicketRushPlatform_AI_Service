@@ -10,8 +10,16 @@ from src.agent.services.booking_service import BookingServiceClient
 
 
 class HoldBookingSeatsInput(BaseModel):
-    showtime_id: str = Field(..., min_length=1, description="Showtime ID for POST /bookings/hold.")
-    seat_ids: list[str] = Field(..., min_length=1, description="Seat IDs to hold. Must include at least one seat.")
+    showtime_id: str = Field(
+        ...,
+        min_length=1,
+        description="Showtime ID for POST /bookings/hold. Never pass an event_id here.",
+    )
+    seat_ids: list[str] = Field(
+        ...,
+        min_length=1,
+        description="Seat UUIDs from GET /showtimes/{showtime_id}/seats. Do not pass display labels such as C1.",
+    )
 
 
 class ReleaseExpiredBookingHoldsInput(BaseModel):
@@ -43,7 +51,8 @@ def create_booking_service_tools(client: Optional[BookingServiceClient] = None) 
         args_schema=HoldBookingSeatsInput,
         description=(
             "Call Booking Service POST /bookings/hold to create a holding booking for selected seats. "
-            "Requires showtime_id and one or more seat_ids. The user is always the authenticated user."
+            "Requires a showtime_id, not an event_id, and one or more seat UUIDs from get_showtime_seats. "
+            "The user is always the authenticated user."
         ),
     )
     async def hold_booking_seats(showtime_id: str, seat_ids: list[str]) -> Any:

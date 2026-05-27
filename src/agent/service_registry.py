@@ -7,8 +7,10 @@ from langchain_core.tools import BaseTool
 
 from src.agent.services.booking_service import BookingServiceClient
 from src.agent.services.event_service import EventServiceClient
+from src.agent.services.user_service import UserServiceClient
 from src.agent.tools.booking_tools import create_booking_service_tools
 from src.agent.tools.event_tools import create_event_service_tools
+from src.agent.tools.user_tools import create_user_service_tools
 
 
 ClientFactory = Callable[[], Any]
@@ -37,9 +39,17 @@ BOOKING_SERVICE_PROVIDER = ServiceToolProvider(
     create_tools=create_booking_service_tools,
 )
 
+USER_SERVICE_PROVIDER = ServiceToolProvider(
+    name="user",
+    description="User Service APIs for authenticated profile lookup, user lists, user detail, and user statistics.",
+    create_client=UserServiceClient,
+    create_tools=create_user_service_tools,
+)
+
 DEFAULT_SERVICE_PROVIDERS: tuple[ServiceToolProvider, ...] = (
     EVENT_SERVICE_PROVIDER,
     BOOKING_SERVICE_PROVIDER,
+    USER_SERVICE_PROVIDER,
 )
 
 

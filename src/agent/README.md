@@ -30,3 +30,4 @@ The compiled graph uses LangGraph's in-memory checkpointer by default. Pass a st
 
 - Event Service: `EVENT_SERVICE_BASE_URL`, default `http://localhost:8080/api/v1`
 - Booking Service: `BOOKING_SERVICE_BASE_URL`, default `http://localhost:8081/api/v1`
+- User Service: `USER_SERVICE_BASE_URL`, default `http://localhost:8082`

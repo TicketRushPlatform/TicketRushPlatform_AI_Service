@@ -63,6 +63,22 @@ class EventServiceClient(JsonHttpServiceClient):
         payload = await self.get_json(f"/events/{quote(clean_event_id, safe='')}")
         return self._validate_response(payload, SuccessResponse)
 
+    async def list_showtimes_by_event(self, event_id: str) -> Any:
+        clean_event_id = event_id.strip()
+        if not clean_event_id:
+            raise ValueError("event_id is required.")
+
+        payload = await self.get_json(f"/events/{quote(clean_event_id, safe='')}/showtimes")
+        return self._validate_response(payload, SuccessResponse)
+
+    async def get_showtime_by_id(self, showtime_id: str) -> Any:
+        clean_showtime_id = showtime_id.strip()
+        if not clean_showtime_id:
+            raise ValueError("showtime_id is required.")
+
+        payload = await self.get_json(f"/showtimes/{quote(clean_showtime_id, safe='')}")
+        return self._validate_response(payload, SuccessResponse)
+
     def _validate_response(self, payload: Any, schema: type[PaginatedResponse] | type[SuccessResponse]) -> dict[str, Any]:
         try:
             return schema.model_validate(payload).model_dump(exclude_none=True)
