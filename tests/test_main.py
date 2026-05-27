@@ -133,17 +133,57 @@ class MainApiHelpersTests(unittest.TestCase):
             },
         )
 
-    def test_record_page_serves_microphone_wav_uploader(self):
+    def test_chat_endpoint_returns_bad_gateway_for_unexpected_agent_error(self):
+        client = TestClient(app)
+
+        with patch(
+            "src.main.ainvoke_ticket_agent",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("OpenAI request failed"),
+            create=True,
+        ):
+            response = client.post(
+                "/api/chat",
+                json={"message": "Any events?", "thread_id": "test"},
+            )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json(), {"detail": "Chat agent request failed: OpenAI request failed"})
+
+    def test_chat_endpoint_returns_bad_gateway_for_unexpected_reply_extraction_error(self):
+        client = TestClient(app)
+
+        with (
+            patch(
+                "src.main.ainvoke_ticket_agent",
+                new_callable=AsyncMock,
+                return_value={"messages": [type("Message", (), {"content": "ok"})()]},
+                create=True,
+            ),
+            patch("src.main.extract_agent_reply", side_effect=RuntimeError("reply parse failed")),
+        ):
+            response = client.post(
+                "/api/chat",
+                json={"message": "Any events?", "thread_id": "test"},
+            )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json(), {"detail": "Chat agent response handling failed: reply parse failed"})
+
+    def test_health_check_returns_ok(self):
+        client = TestClient(app)
+
+        response = client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"status": "ok"})
+
+    def test_record_page_is_not_served_by_ai_service(self):
         client = TestClient(app)
 
         response = client.get("/record")
 
-        self.assertEqual(response.status_code, 200)
-        self.assertIn("text/html", response.headers["content-type"])
-        self.assertIn("Start recording", response.text)
-        self.assertIn("/api/recognize/songfinder?startTime=0", response.text)
-        self.assertIn("audio/wav", response.text)
-        self.assertIn("recording.wav", response.text)
+        self.assertEqual(response.status_code, 404)
 
     def test_recognize_song_calls_songfinder_service(self):
         audio_bytes = b"RIFF....WAVEfmt "

@@ -53,9 +53,76 @@ def route_after_model(state: MessagesState) -> str:
     return END
 
 
+def get_message_tool_call_ids(message: Any) -> list[str]:
+    tool_calls = getattr(message, "tool_calls", None)
+    if tool_calls is None and isinstance(message, dict):
+        tool_calls = message.get("tool_calls")
+    if not tool_calls:
+        return []
+
+    tool_call_ids = []
+    for tool_call in tool_calls:
+        if isinstance(tool_call, dict):
+            tool_call_id = tool_call.get("id")
+        else:
+            tool_call_id = getattr(tool_call, "id", None)
+        if tool_call_id:
+            tool_call_ids.append(str(tool_call_id))
+    return tool_call_ids
+
+
+def get_tool_response_call_id(message: Any) -> Optional[str]:
+    tool_call_id = getattr(message, "tool_call_id", None)
+    if tool_call_id is None and isinstance(message, dict):
+        tool_call_id = message.get("tool_call_id")
+    return str(tool_call_id) if tool_call_id else None
+
+
+def is_tool_response_message(message: Any) -> bool:
+    if get_tool_response_call_id(message):
+        return True
+    if isinstance(message, dict):
+        return message.get("role") == "tool"
+    return getattr(message, "type", None) == "tool"
+
+
+def sanitize_tool_message_history(messages: Sequence[Any]) -> list[Any]:
+    sanitized: list[Any] = []
+    index = 0
+    while index < len(messages):
+        message = messages[index]
+        expected_tool_call_ids = set(get_message_tool_call_ids(message))
+        if not expected_tool_call_ids:
+            if not is_tool_response_message(message):
+                sanitized.append(message)
+            index += 1
+            continue
+
+        block = [message]
+        remaining_tool_call_ids = set(expected_tool_call_ids)
+        cursor = index + 1
+        while cursor < len(messages) and is_tool_response_message(messages[cursor]):
+            tool_call_id = get_tool_response_call_id(messages[cursor])
+            if tool_call_id in remaining_tool_call_ids:
+                remaining_tool_call_ids.remove(tool_call_id)
+            block.append(messages[cursor])
+            cursor += 1
+
+        if remaining_tool_call_ids:
+            logger.warning(
+                "dropping incomplete tool-call message block missing_tool_call_ids=%s",
+                sorted(remaining_tool_call_ids),
+            )
+        else:
+            sanitized.extend(block)
+        index = cursor
+
+    return sanitized
+
+
 def build_model_node(model: Any, system_prompt: str) -> Callable[[MessagesState], Any]:
     async def call_model(state: MessagesState) -> dict[str, list[BaseMessage]]:
-        messages = [SystemMessage(content=system_prompt), *state.get("messages", [])]
+        messages = [SystemMessage(content=system_prompt), *sanitize_tool_message_history(state.get("messages", []))]
         logger.info("agent model invoked message_count=%d", len(messages))
         ainvoke = getattr(model, "ainvoke", None)
         if ainvoke is not None:

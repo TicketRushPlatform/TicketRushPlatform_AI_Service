@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.tools import tool
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START
@@ -16,6 +16,7 @@ from src.agent.graph import (
     invoke_ticket_agent,
     render_ticket_agent_prompt,
     route_after_model,
+    sanitize_tool_message_history,
 )
 from src.agent.services.event_service import EventServiceClient
 from src.agent.service_registry import EVENT_SERVICE_PROVIDER, ServiceToolProvider, collect_service_tools
@@ -159,6 +160,64 @@ class AgentServiceRegistryTests(unittest.IsolatedAsyncioTestCase):
         joined_logs = "\n".join(logs.output)
         self.assertIn("agent requested tool calls", joined_logs)
         self.assertIn("list_events", joined_logs)
+
+    def test_sanitize_tool_message_history_removes_unanswered_tool_call_block(self):
+        messages = [
+            HumanMessage(content="list events"),
+            AIMessage(
+                content="",
+                tool_calls=[{"name": "list_events", "args": {"page": 1}, "id": "call_1"}],
+            ),
+            HumanMessage(content="try again"),
+        ]
+
+        sanitized = sanitize_tool_message_history(messages)
+
+        self.assertEqual([message.content for message in sanitized], ["list events", "try again"])
+
+    def test_sanitize_tool_message_history_keeps_complete_tool_call_block(self):
+        ai_message = AIMessage(
+            content="",
+            tool_calls=[{"name": "list_events", "args": {"page": 1}, "id": "call_1"}],
+        )
+        tool_message = ToolMessage(content='{"data":[]}', tool_call_id="call_1")
+        messages = [
+            HumanMessage(content="list events"),
+            ai_message,
+            tool_message,
+            AIMessage(content="No events found."),
+        ]
+
+        sanitized = sanitize_tool_message_history(messages)
+
+        self.assertEqual(sanitized, messages)
+
+    async def test_model_node_omits_unanswered_tool_call_history_before_model_invoke(self):
+        class RecordingModel:
+            def __init__(self):
+                self.messages = None
+
+            def invoke(self, messages):
+                self.messages = messages
+                return AIMessage(content="ok")
+
+        model = RecordingModel()
+        node = build_model_node(model, "TicketRush agent.")
+
+        await node(
+            {
+                "messages": [
+                    HumanMessage(content="list events"),
+                    AIMessage(
+                        content="",
+                        tool_calls=[{"name": "list_events", "args": {"page": 1}, "id": "call_1"}],
+                    ),
+                    HumanMessage(content="try again"),
+                ]
+            }
+        )
+
+        self.assertEqual([message.content for message in model.messages], ["TicketRush agent.", "list events", "try again"])
 
 
 class AsyncAgentInvocationTests(unittest.IsolatedAsyncioTestCase):

@@ -5,7 +5,6 @@ from typing import Any, Dict
 import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Header, HTTPException, Query, UploadFile
-from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from src.agent.auth_context import (
@@ -21,7 +20,6 @@ from src.agent.services.http_service import (
     reset_downstream_authorization,
     set_downstream_authorization,
 )
-from src.frontend import router as frontend_router
 from src.song_recognition.songfinder_service import recognize_song_bytes
 
 load_dotenv()
@@ -29,22 +27,6 @@ logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="SongFinder Backend")
-
-DEFAULT_CORS_ORIGINS = "http://localhost:3000,http://localhost:5173"
-CORS_ALLOW_ORIGINS = [
-    origin.strip()
-    for origin in os.getenv("CORS_ALLOW_ORIGINS", DEFAULT_CORS_ORIGINS).split(",")
-    if origin.strip()
-]
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=CORS_ALLOW_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-app.include_router(frontend_router)
 
 JWT_SECRET = os.getenv("JWT_SECRET", "dev-only-secret")
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
@@ -104,16 +86,25 @@ async def chat(
     except ServiceApiError as exc:
         logger.error("chat downstream service error thread_id=%s error=%s", request.thread_id, exc)
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("chat agent request failed thread_id=%s", request.thread_id)
+        raise HTTPException(status_code=502, detail=f"Chat agent request failed: {exc}") from exc
     finally:
         if auth_token is not None:
             reset_downstream_authorization(auth_token)
         if user_token is not None:
             reset_authenticated_user(user_token)
 
-    reply = extract_agent_reply(agent_result)
-    if not reply:
-        logger.error("chat agent returned empty response thread_id=%s", request.thread_id)
-        raise HTTPException(status_code=502, detail="Chat agent returned an empty response.")
+    try:
+        reply = extract_agent_reply(agent_result)
+        if not reply:
+            logger.error("chat agent returned empty response thread_id=%s", request.thread_id)
+            raise HTTPException(status_code=502, detail="Chat agent returned an empty response.")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("chat agent response handling failed thread_id=%s", request.thread_id)
+        raise HTTPException(status_code=502, detail=f"Chat agent response handling failed: {exc}") from exc
 
     logger.info("chat agent reply thread_id=%s reply=%r", request.thread_id, reply)
     return ChatResponse(message=reply, thread_id=request.thread_id)
